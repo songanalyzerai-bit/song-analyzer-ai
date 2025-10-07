@@ -1,0 +1,68 @@
+diff --git a/App.tsx b/App.tsx
+index 091c998538c58349fb88530c4897f2cf82a893a4..7861eb2ff72124e60bcbdc4072ab2c4eead2e0d1 100644
+--- a/App.tsx
++++ b/App.tsx
+@@ -59,56 +59,57 @@ function App() {
+     setAnalysisResult(exampleAnalysis);
+     setCurrentView('analysis');
+     window.scrollTo({ top: 0, behavior: 'smooth' });
+   };
+ 
+   const handleSelectHistoryItem = (item: AnalysisResult) => {
+     setError(null);
+     setComparisonItems(null);
+     setAnalysisResult(item);
+     setCurrentView('analysis');
+     setIsHistoryVisible(false);
+     window.scrollTo({ top: 0, behavior: 'smooth' });
+   }
+ 
+   const handleCompareItems = (item1: AnalysisResult, item2: AnalysisResult) => {
+     setError(null);
+     setAnalysisResult(null);
+     setComparisonItems([item1, item2]);
+     setCurrentView('comparison');
+     setIsHistoryVisible(false);
+     window.scrollTo({ top: 0, behavior: 'smooth' });
+   }
+ 
+   const renderContent = () => {
+     switch (currentView) {
+-      case 'analysis':
+-        return analysisResult ? (
+-          <AnalysisDisplay 
+-            analysisResult={analysisResult} 
+-          />
+-        ) : null;
++      case 'analysis':
++        return analysisResult ? (
++          <AnalysisDisplay
++            analysisResult={analysisResult}
++            onNewAnalysis={handleClearView}
++          />
++        ) : null;
+       case 'comparison':
+         return comparisonItems ? (
+            <ComparisonDisplay
+             item1={comparisonItems[0]}
+             item2={comparisonItems[1]}
+             onNewAnalysis={handleClearView}
+            />
+         ) : null;
+       case 'input':
+       default:
+         return (
+           <SongInputForm 
+             onAnalysisRequest={handleAnalysisRequest} 
+             isLoading={isLoading} 
+             error={error}
+             onShowExample={handleShowExample}
+           />
+         );
+     }
+   }
+ 
+   return (
+     <div className="flex flex-col min-h-screen bg-slate-900 text-slate-200 font-sans">
+       <Header onHistoryToggle={() => setIsHistoryVisible(!isHistoryVisible)} isHistoryVisible={isHistoryVisible}/>
+        <div className={`fixed inset-0 bg-black/50 z-20 transition-opacity duration-300 ${isHistoryVisible ? 'opacity-100' : 'opacity-0 pointer-events-none'}`} onClick={() => setIsHistoryVisible(false)}></div>
