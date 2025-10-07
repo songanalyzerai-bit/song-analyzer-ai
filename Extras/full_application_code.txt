@@ -1,0 +1,1840 @@
+--- START OF FILE index.html ---
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Song Analyzer AI</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='0.9em' font-size='90'%3E🎵%3C/text%3E%3C/svg%3E">
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-900">
+  <div id="root"></div>
+
+  <script type="importmap">
+{
+  "imports": {
+    "react": "https://esm.sh/react@18.2.0",
+    "react-dom/client": "https://esm.sh/react-dom@18.2.0/client",
+    "@google/genai": "https://esm.sh/@google/genai@0.2.1",
+    "jspdf": "https://esm.sh/jspdf@2.5.1",
+    "html2canvas": "https://esm.sh/html2canvas@1.4.1",
+    "file-saver": "https://esm.sh/file-saver@2.0.5",
+    "docx": "https://esm.sh/docx@8.2.2",
+    "firebase/app": "https://esm.sh/firebase@10.7.1/app",
+    "firebase/auth": "https://esm.sh/firebase@10.7.1/auth",
+    "firebase/firestore": "https://esm.sh/firebase@10.7.1/firestore"
+  }
+}
+</script>
+  <script type="module" src="/index.tsx"></script>
+</body>
+</html>
+--- START OF FILE index.tsx ---
+import React from 'react';
+import ReactDOM from 'react-dom/client';
+import App from './App';
+import { AuthProvider } from './contexts/AuthContext';
+
+const rootElement = document.getElementById('root');
+if (!rootElement) {
+  throw new Error("Could not find root element to mount to");
+}
+
+const root = ReactDOM.createRoot(rootElement);
+root.render(
+  <React.StrictMode>
+    <AuthProvider>
+      <App />
+    </AuthProvider>
+  </React.StrictMode>
+);
+--- START OF FILE metadata.json ---
+{
+  "name": "Song Analyzer AI",
+  "description": "An AI-powered tool to analyze song lyrics. Log in to save, track, and compare different versions of your songs to see your progress."
+}
+--- START OF FILE App.tsx ---
+import React, { useState } from 'react';
+import { analyzeSong } from './services/geminiService';
+import type { AnalysisResult } from './types';
+import SongInputForm from './components/SongInputForm';
+import AnalysisDisplay from './components/AnalysisDisplay';
+import Header from './components/Header';
+import Footer from './components/Footer';
+import HistorySidebar from './components/HistorySidebar';
+import { exampleAnalysis } from './exampleAnalysis';
+import { useAuth } from './hooks/useAuth';
+import { saveAnalysis } from './services/firestoreService';
+import ComparisonDisplay from './components/ComparisonDisplay';
+
+type View = 'input' | 'analysis' | 'comparison';
+
+function App() {
+  const [currentView, setCurrentView] = useState<View>('input');
+  const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null);
+  const [comparisonItems, setComparisonItems] = useState<[AnalysisResult, AnalysisResult] | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [isHistoryVisible, setIsHistoryVisible] = useState(false);
+  const [historyKey, setHistoryKey] = useState(0); // To force re-render of history
+
+  const { currentUser } = useAuth();
+
+  const handleAnalysisRequest = async (title: string, lyrics: string, musicDescription: string, genre: string) => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      const result = await analyzeSong(title, lyrics, musicDescription, genre);
+      setAnalysisResult(result);
+      setCurrentView('analysis');
+      if (currentUser) {
+        try {
+            await saveAnalysis(currentUser.uid, result);
+            setHistoryKey(prev => prev + 1); // Trigger history refresh
+        } catch (saveError: any) {
+            console.error("Failed to save analysis:", saveError);
+        }
+      }
+    } catch (e: any) {
+      setError(e.message || 'An unknown error occurred.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+  
+  const handleClearView = () => {
+    setAnalysisResult(null);
+    setComparisonItems(null);
+    setCurrentView('input');
+    setError(null);
+  }
+
+  const handleShowExample = () => {
+    setError(null);
+    setComparisonItems(null);
+    setAnalysisResult(exampleAnalysis);
+    setCurrentView('analysis');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const handleSelectHistoryItem = (item: AnalysisResult) => {
+    setError(null);
+    setComparisonItems(null);
+    setAnalysisResult(item);
+    setCurrentView('analysis');
+    setIsHistoryVisible(false);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  const handleCompareItems = (item1: AnalysisResult, item2: AnalysisResult) => {
+    setError(null);
+    setAnalysisResult(null);
+    setComparisonItems([item1, item2]);
+    setCurrentView('comparison');
+    setIsHistoryVisible(false);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  const renderContent = () => {
+    switch (currentView) {
+      case 'analysis':
+        return analysisResult ? (
+          <AnalysisDisplay 
+            analysisResult={analysisResult} 
+            onNewAnalysis={handleClearView}
+          />
+        ) : null;
+      case 'comparison':
+        return comparisonItems ? (
+           <ComparisonDisplay
+            item1={comparisonItems[0]}
+            item2={comparisonItems[1]}
+            onNewAnalysis={handleClearView}
+           />
+        ) : null;
+      case 'input':
+      default:
+        return (
+          <SongInputForm 
+            onAnalysisRequest={handleAnalysisRequest} 
+            isLoading={isLoading} 
+            error={error}
+            onShowExample={handleShowExample}
+          />
+        );
+    }
+  }
+
+  return (
+    <div className="flex flex-col min-h-screen bg-slate-900 text-slate-200 font-sans">
+      <Header onHistoryToggle={() => setIsHistoryVisible(!isHistoryVisible)} isHistoryVisible={isHistoryVisible}/>
+       <div className={`fixed inset-0 bg-black/50 z-20 transition-opacity duration-300 ${isHistoryVisible ? 'opacity-100' : 'opacity-0 pointer-events-none'}`} onClick={() => setIsHistoryVisible(false)}></div>
+      <div className="flex flex-1 overflow-hidden relative">
+        <HistorySidebar 
+          isVisible={isHistoryVisible} 
+          onSelectItem={handleSelectHistoryItem} 
+          onCompareItems={handleCompareItems}
+          onClose={() => setIsHistoryVisible(false)}
+          key={historyKey} 
+        />
+        <main className="flex-1 p-4 sm:p-6 md:p-8 transition-all duration-300 overflow-y-auto">
+          <div className="max-w-4xl mx-auto">
+            {renderContent()}
+          </div>
+        </main>
+      </div>
+      <Footer />
+    </div>
+  );
+}
+
+export default App;
+--- START OF FILE types.ts ---
+export interface AnalysisCategory {
+  score: number;
+  feedback: string;
+}
+
+export interface ArtistComparison {
+  artist: string;
+  reason: string;
+}
+
+export interface SuggestedGenre {
+  name: string;
+  reason: string;
+}
+
+export interface AnalysisResult {
+  id?: string; // Optional: will be added when saved to DB
+  title: string;
+  createdAt?: any; // Firebase ServerTimestamp
+  creativity: AnalysisCategory;
+  emotionalImpact: AnalysisCategory;
+  lyricism: AnalysisCategory;
+  craftsmanship: AnalysisCategory;
+  audienceAppeal: AnalysisCategory;
+  commercialPotential: AnalysisCategory; // New category
+  overallScore: number;
+  firstImpression: string;
+  strengths: string[];
+  weaknesses: string[];
+  suggestions: string[];
+  artistComparisons: ArtistComparison[];
+  suggestedGenres: SuggestedGenre[];
+  finalVerdict: string;
+}
+--- START OF FILE firebase.ts ---
+import { initializeApp, type FirebaseApp } from 'firebase/app';
+import { getAuth, type Auth } from 'firebase/auth';
+import { getFirestore, type Firestore } from 'firebase/firestore';
+
+let app: FirebaseApp | undefined;
+let auth: Auth | undefined;
+let db: Firestore | undefined;
+
+let initializationAttempted = false;
+
+function areFirebaseKeysPresent(): boolean {
+  const env = (globalThis as any).process?.env;
+  return !!(env?.FIREBASE_API_KEY && env?.FIREBASE_AUTH_DOMAIN && env?.FIREBASE_PROJECT_ID);
+}
+export const isFirebaseEnabled = areFirebaseKeysPresent();
+
+function initializeFirebase() {
+  if (app) {
+    return;
+  }
+  
+  if (initializationAttempted || !isFirebaseEnabled) {
+      if (!initializationAttempted && !isFirebaseEnabled) {
+          console.log("Firebase configuration is missing. Login and history features are disabled.");
+      }
+      initializationAttempted = true;
+      return;
+  }
+  initializationAttempted = true;
+
+  const env = (globalThis as any).process?.env;
+
+  const firebaseConfig = {
+    apiKey: env?.FIREBASE_API_KEY,
+    authDomain: env?.FIREBASE_AUTH_DOMAIN,
+    projectId: env?.FIREBASE_PROJECT_ID,
+    storageBucket: env?.FIREBASE_STORAGE_BUCKET,
+    messagingSenderId: env?.FIREBASE_MESSAGING_SENDER_ID,
+    appId: env?.FIREBASE_APP_ID,
+  };
+
+  app = initializeApp(firebaseConfig);
+  auth = getAuth(app);
+  db = getFirestore(app);
+}
+
+export function getFirebaseAuth(): Auth | null {
+  initializeFirebase();
+  return auth || null;
+}
+
+export function getFirestoreDb(): Firestore | null {
+  initializeFirebase();
+  return db || null;
+}
+--- START OF FILE exampleAnalysis.ts ---
+import type { AnalysisResult } from './types';
+
+export const exampleAnalysis: AnalysisResult = {
+  id: 'example-001',
+  title: "Echoes in the Rain",
+  createdAt: { toDate: () => new Date() } as any, // Mock Firebase Timestamp
+  creativity: {
+    score: 8.5,
+    feedback: "The central metaphor of 'echoes in the rain' is compelling and original, creating a strong, moody atmosphere. The imagery used is vivid and consistently supports the song's theme of lingering memories."
+  },
+  emotionalImpact: {
+    score: 9.0,
+    feedback: "The song excels at creating a poignant sense of nostalgia and loss. The listener can genuinely feel the weight of the past, particularly in the chorus and bridge, which are emotionally resonant."
+  },
+  lyricism: {
+    score: 8.2,
+    feedback: "The lyricism is strong, with good use of alliteration and assonance. The rhyme scheme is effective without feeling forced. Some phrases are exceptionally poetic, though a few lines in the second verse are slightly clichéd."
+  },
+  craftsmanship: {
+    score: 7.8,
+    feedback: "The song follows a classic verse-chorus structure that is well-executed and easy to follow. The transition into the bridge is particularly smooth and builds tension effectively before the final chorus."
+  },
+  audienceAppeal: {
+    score: 8.0,
+    feedback: "The themes of love and memory are universally relatable, giving the song broad appeal. It would likely resonate well with fans of indie pop, folk, and singer-songwriter genres."
+  },
+  commercialPotential: {
+    score: 7.5,
+    feedback: "The song has a memorable chorus and a strong emotional core, which gives it commercial potential. It would be well-suited for placement in a film or TV show's emotional scene to enhance its reach."
+  },
+  overallScore: 8.2,
+  firstImpression: "A beautifully melancholic and atmospheric track that uses a powerful central metaphor to explore themes of memory and loss.",
+  strengths: [
+    "Powerful and original central metaphor.",
+    "Strong emotional resonance and atmosphere.",
+    "Memorable and well-structured chorus."
+  ],
+  weaknesses: [
+    "Some lyrical clichés in the second verse.",
+    "The melody, as described, might feel slightly repetitive without a dynamic arrangement.",
+    "Could benefit from a more impactful and surprising bridge."
+  ],
+  suggestions: [
+    "Revisit the second verse to replace phrases like 'ghost of a smile' with more unique imagery.",
+    "Consider adding a dynamic instrumental swell or a change in rhythm during the bridge to build more tension.",
+    "Experiment with a slightly more varied vocal delivery between the verses and chorus to enhance the emotional arc."
+  ],
+  artistComparisons: [
+    { artist: "Bon Iver", reason: "For its atmospheric production and emotionally raw, poetic lyrics." },
+    { artist: "The National", reason: "Shares a similar melancholic tone and explores complex emotional landscapes." },
+    { artist: "Phoebe Bridgers", reason: "Due to the intimate storytelling and poignant, specific lyrical details." }
+  ],
+  suggestedGenres: [
+    { name: "Indie Folk", reason: "The song's lyrical depth and atmospheric quality fit well within this genre." },
+    { name: "Singer-Songwriter", reason: "The personal and introspective nature of the lyrics is a hallmark of this genre." },
+    { name: "Ambient Pop", reason: "With the right production, the song could lean into a more atmospheric, pop-oriented sound." }
+  ],
+  finalVerdict: "Overall, 'Echoes in the Rain' is a powerful and well-crafted song with significant artistic merit. Its greatest strength lies in its ability to create a deeply affecting mood and tell a relatable story through a unique and memorable metaphor. With a few minor lyrical refinements and a focus on dynamic arrangement, this song has the potential to be truly exceptional and connect with a wide audience."
+};
+--- START OF FILE services/geminiService.ts ---
+import { GoogleGenAI, Type } from "@google/genai";
+import type { AnalysisResult } from '../types';
+
+let ai: GoogleGenAI | null = null;
+let initializationError: string | null = null;
+
+function getAiClient(): GoogleGenAI {
+  if (ai) {
+    return ai;
+  }
+  if (initializationError) {
+    throw new Error(initializationError);
+  }
+
+  try {
+    const apiKey = (globalThis as any).process?.env?.API_KEY;
+
+    if (!apiKey) {
+      throw new Error("API Key is not available.");
+    }
+    
+    ai = new GoogleGenAI({ apiKey: apiKey });
+    return ai;
+  } catch (e: any) {
+    console.error("Failed to initialize GoogleGenAI:", e);
+    initializationError = "Analysis service is not configured. Please ensure the API Key is set.";
+    throw new Error(initializationError);
+  }
+}
+
+const analysisCategorySchema = {
+  type: Type.OBJECT,
+  properties: {
+    score: { type: Type.NUMBER, description: 'A score from 0.0 to 10.0, can be a float.' },
+    feedback: { type: Type.STRING, description: 'Detailed feedback for this category (2-3 sentences).' },
+  },
+  required: ['score', 'feedback']
+};
+
+const analysisSchema = {
+  type: Type.OBJECT,
+  properties: {
+    title: { type: Type.STRING, description: "The title of the song being analyzed." },
+    creativity: { ...analysisCategorySchema, description: 'Evaluation of the song\'s originality and uniqueness.' },
+    emotionalImpact: { ...analysisCategorySchema, description: 'Evaluation of the song\'s ability to evoke emotion.' },
+    lyricism: { ...analysisCategorySchema, description: 'Evaluation of the quality and artistry of the lyrics.' },
+    craftsmanship: { ...analysisCategorySchema, description: 'Evaluation of the song\'s structure, flow, and technical construction.' },
+    audienceAppeal: { ...analysisCategorySchema, description: 'Evaluation of the song\'s potential to connect with a target audience.' },
+    commercialPotential: { ...analysisCategorySchema, description: 'Evaluation of the song\'s viability for mainstream success and radio play.' },
+    overallScore: { type: Type.NUMBER, description: 'The overall weighted average score for the song, from 0.0 to 10.0.' },
+    firstImpression: { type: Type.STRING, description: 'A concise, one-sentence initial reaction to the song.' },
+    strengths: {
+      type: Type.ARRAY,
+      items: { type: Type.STRING },
+      description: 'A list of 3-4 key strengths of the song, as bullet points.'
+    },
+    weaknesses: {
+      type: Type.ARRAY,
+      items: { type: Type.STRING },
+      description: 'A list of 3-4 key weaknesses or areas for improvement, as bullet points.'
+    },
+    suggestions: {
+      type: Type.ARRAY,
+      items: { type: Type.STRING },
+      description: 'A list of 3-4 concrete suggestions for improving the song, as bullet points.'
+    },
+    artistComparisons: {
+      type: Type.ARRAY,
+      items: {
+        type: Type.OBJECT,
+        properties: {
+          artist: { type: Type.STRING, description: 'The name of a comparable artist.' },
+          reason: { type: Type.STRING, description: 'A brief explanation for the comparison.' },
+        },
+        required: ['artist', 'reason']
+      },
+      description: 'A list of 2-3 artists that the song is similar to.'
+    },
+    suggestedGenres: {
+      type: Type.ARRAY,
+      items: {
+        type: Type.OBJECT,
+        properties: {
+          name: { type: Type.STRING, description: 'The name of a suitable genre.' },
+          reason: { type: Type.STRING, description: 'A brief explanation for the genre suggestion.' },
+        },
+        required: ['name', 'reason']
+      },
+      description: 'A list of 2-3 genres that fit the song.'
+    },
+    finalVerdict: { type: Type.STRING, description: 'A final, summary paragraph (3-5 sentences) providing a holistic verdict on the song that balances artistic merit, commercial potential, and niche appeal.' },
+  },
+  required: [
+      "title", "creativity", "emotionalImpact", "lyricism", "craftsmanship", "audienceAppeal",
+      "commercialPotential", "overallScore", "firstImpression", "strengths", "weaknesses",
+      "suggestions", "artistComparisons", "suggestedGenres", "finalVerdict"
+  ]
+};
+
+const normalizeScore = (score: number): number => {
+    if (score > 10) {
+        return parseFloat((score / 10.0).toFixed(1));
+    }
+    return parseFloat(score.toFixed(1));
+};
+
+export async function analyzeSong(title: string, lyrics: string, musicDescription: string, genre: string): Promise<AnalysisResult> {
+    const localAi = getAiClient();
+    
+    const model = 'gemini-2.5-flash';
+    
+    const prompt = `
+      You are a world-class A&R executive and music critic with a deep understanding of music theory, songwriting, and market trends.
+      Analyze the following song. Provide a detailed, constructive, and unbiased critique. Your feedback should be professional and helpful for the artist.
+      
+      **Rules for Analysis:**
+      - **Be Forgiving with User Input:** The user may provide song structure labels like "[Verse]", "Verse:", "V1", etc. Recognize these as valid. Similarly, accept common synonyms like "Hook" for "Chorus". Do not penalize for formatting variations.
+      - **Music Description Context:** The user's music description may be simple (e.g., "upbeat country") or complex. Use whatever information is provided as context. A simple description is just as valid as a technical one. If no description is provided, analyze based on lyrics alone.
+      - **Genre Context:** If a genre is provided by the user, use it as the primary lens for your analysis. Evaluate how well the song fits that genre. Always provide 2-3 genre suggestions, even if the user provided one.
+      - **Scoring:** All scores MUST be on a 0.0 to 10.0 scale, with one decimal place. The overall score should be a weighted average, not a simple average.
+      - **Final Verdict:** The verdict should be a balanced summary, considering artistic merit, commercial potential, and niche appeal, not just "Grammy potential".
+
+      **Song Title:** "${title}"
+      
+      **Provided Genre (if any):** ${genre || 'Not provided'}
+
+      **Lyrics:**
+      ---
+      ${lyrics}
+      ---
+
+      **Music Description (for context):**
+      ---
+      ${musicDescription || 'Not provided.'}
+      ---
+
+      Evaluate the song based on the defined criteria in the JSON schema.
+    `;
+
+    try {
+        const response = await localAi.models.generateContent({
+            model: model,
+            contents: prompt,
+            config: {
+                responseMimeType: "application/json",
+                responseSchema: analysisSchema,
+            },
+        });
+
+        const jsonText = response.text.trim();
+        const result: AnalysisResult = JSON.parse(jsonText);
+        
+        result.overallScore = normalizeScore(result.overallScore);
+        result.creativity.score = normalizeScore(result.creativity.score);
+        result.emotionalImpact.score = normalizeScore(result.emotionalImpact.score);
+        result.lyricism.score = normalizeScore(result.lyricism.score);
+        result.craftsmanship.score = normalizeScore(result.craftsmanship.score);
+        result.audienceAppeal.score = normalizeScore(result.audienceAppeal.score);
+        result.commercialPotential.score = normalizeScore(result.commercialPotential.score);
+
+        result.title = title;
+
+        return result;
+    } catch (error) {
+        console.error("Error analyzing song with Gemini:", error);
+        if (error instanceof Error) {
+             if (error.message.includes("SAFETY")) {
+                 throw new Error("The request was blocked due to safety concerns. Please revise the lyrics and try again.");
+             }
+             if (error.message.includes("API Key")) {
+                 throw new Error("The AI service is not configured correctly. Please check the API Key.");
+             }
+        }
+        throw new Error("The AI model failed to generate a valid analysis. This could be a temporary issue. Please try again later.");
+    }
+}
+--- START OF FILE services/firestoreService.ts ---
+import { getFirestoreDb } from '../firebase';
+import { collection, addDoc, query, where, getDocs, serverTimestamp, orderBy } from 'firebase/firestore';
+import type { AnalysisResult } from '../types';
+
+const ANALYSES_COLLECTION = 'analyses';
+
+export const saveAnalysis = async (userId: string, analysis: Omit<AnalysisResult, 'id' | 'createdAt'>): Promise<string> => {
+  const db = getFirestoreDb();
+  if (!db) {
+    throw new Error("Firestore is not initialized. Cannot save analysis.");
+  }
+
+  try {
+    const docRef = await addDoc(collection(db, ANALYSES_COLLECTION), {
+      ...analysis,
+      userId,
+      createdAt: serverTimestamp(),
+    });
+    return docRef.id;
+  } catch (error) {
+    console.error("Error saving analysis to Firestore:", error);
+    throw new Error("Could not save your analysis. Please try again.");
+  }
+};
+
+export const getUserAnalyses = async (userId: string): Promise<AnalysisResult[]> => {
+    const db = getFirestoreDb();
+    if (!db) {
+        console.error("Firestore is not initialized. Cannot fetch analyses.");
+        return [];
+    }
+
+    try {
+        const q = query(
+            collection(db, ANALYSES_COLLECTION), 
+            where("userId", "==", userId),
+            orderBy("createdAt", "desc")
+        );
+        
+        const querySnapshot = await getDocs(q);
+        const analyses: AnalysisResult[] = [];
+        querySnapshot.forEach((doc) => {
+            analyses.push({ id: doc.id, ...doc.data() } as AnalysisResult);
+        });
+        return analyses;
+    } catch (error) {
+        console.error("Error fetching user analyses:", error);
+        throw new Error("Could not fetch your saved analyses.");
+    }
+}
+--- START OF FILE hooks/useAuth.ts ---
+import { useContext } from 'react';
+import { AuthContext } from '../contexts/AuthContext';
+
+export const useAuth = () => {
+  return useContext(AuthContext);
+};
+--- START OF FILE contexts/AuthContext.tsx ---
+import React, { createContext, useState, useEffect, ReactNode } from 'react';
+import { onAuthStateChanged, User } from 'firebase/auth';
+import { getFirebaseAuth, isFirebaseEnabled } from '../firebase';
+
+interface AuthContextType {
+  currentUser: User | null;
+  loading: boolean;
+}
+
+export const AuthContext = createContext<AuthContextType>({
+  currentUser: null,
+  loading: isFirebaseEnabled,
+});
+
+interface AuthProviderProps {
+  children: ReactNode;
+}
+
+export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [loading, setLoading] = useState(isFirebaseEnabled);
+
+  useEffect(() => {
+    if (!isFirebaseEnabled) {
+      return;
+    }
+
+    const auth = getFirebaseAuth();
+    if (!auth) {
+      setLoading(false);
+      return;
+    }
+
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      setCurrentUser(user);
+      setLoading(false);
+    });
+
+    return unsubscribe;
+  }, []);
+
+  return (
+    <AuthContext.Provider value={{ currentUser, loading }}>
+      {children}
+    </AuthContext.Provider>
+  );
+};
+--- START OF FILE components/SongInputForm.tsx ---
+import React, { useState } from 'react';
+import LoadingSpinner from './LoadingSpinner';
+import ErrorAlert from './ErrorAlert';
+import { exampleAnalysis } from '../exampleAnalysis';
+
+interface SongInputFormProps {
+  onAnalysisRequest: (title: string, lyrics: string, musicDescription: string, genre: string) => void;
+  isLoading: boolean;
+  error: string | null;
+  onShowExample: () => void;
+}
+
+const CHAR_LIMITS = {
+  title: 100,
+  genre: 50,
+  musicDescription: 500,
+  lyrics: 10000,
+};
+
+const InputField: React.FC<{
+  id: string;
+  label: string;
+  value: string;
+  onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => void;
+  placeholder: string;
+  maxLength: number;
+  required?: boolean;
+  disabled?: boolean;
+  isTextArea?: boolean;
+  rows?: number;
+}> = ({ id, label, value, onChange, placeholder, maxLength, required, disabled, isTextArea, rows }) => {
+  const InputComponent = isTextArea ? 'textarea' : 'input';
+  return (
+    <div>
+      <div className="flex justify-between items-center mb-2">
+        <label htmlFor={id} className="block text-sm font-medium text-slate-300">
+          {label} {required && <span className="text-red-400">*</span>}
+        </label>
+        <span className="text-xs text-slate-500">
+          {value.length} / {maxLength}
+        </span>
+      </div>
+      <InputComponent
+        id={id}
+        value={value}
+        onChange={onChange}
+        placeholder={placeholder}
+        maxLength={maxLength}
+        required={required}
+        disabled={disabled}
+        rows={rows}
+        className="w-full px-4 py-3 bg-slate-900 border border-slate-600 rounded-lg text-slate-200 placeholder-slate-500 focus:ring-2 focus:ring-fuchsia-500 focus:border-fuchsia-500 transition duration-200 disabled:opacity-50"
+        {...(isTextArea && { className: "w-full px-4 py-3 bg-slate-900 border border-slate-600 rounded-lg text-slate-200 placeholder-slate-500 focus:ring-2 focus:ring-fuchsia-500 focus:border-fuchsia-500 transition duration-200 font-mono text-sm disabled:opacity-50"})}
+      />
+    </div>
+  );
+};
+
+const SongInputForm: React.FC<SongInputFormProps> = ({ onAnalysisRequest, isLoading, error, onShowExample }) => {
+  const [title, setTitle] = useState('');
+  const [genre, setGenre] = useState('');
+  const [lyrics, setLyrics] = useState('');
+  const [musicDescription, setMusicDescription] = useState('');
+  const [formError, setFormError] = useState<string | null>(null);
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!title.trim() || !lyrics.trim()) {
+      setFormError('Please provide a song title and lyrics.');
+      return;
+    }
+    setFormError(null);
+    onAnalysisRequest(title, lyrics, musicDescription, genre);
+  };
+  
+  const exampleLyricsPlaceholder = `[Verse 1]
+Streetlights paint the town in shades of blue
+Another night, another memory of you
+I walk the pavement where we used to dream
+Lost in the echoes of a silent scream
+
+[Chorus]
+And it's just echoes in the rain
+A whispered requiem of pain
+Every drop a memory, a face I can't replace
+Just empty spaces, time cannot erase
+`;
+
+  return (
+    <div className="bg-slate-800 p-6 sm:p-8 rounded-2xl border border-slate-700 shadow-2xl relative animate-fade-in-up">
+      {isLoading && <LoadingSpinner />}
+      {error && !isLoading && <ErrorAlert message={error} />}
+
+      <div className="text-center mb-6">
+        <h2 className="text-3xl font-extrabold text-white tracking-tight">Analyze Your Song</h2>
+        <p className="text-slate-400 mt-2">Get instant, AI-powered feedback on your lyrics and musical ideas.</p>
+      </div>
+      
+      <div className="bg-slate-900/50 border border-slate-700 rounded-lg p-4 text-center text-sm text-slate-400 mb-6">
+        <span className="font-bold text-cyan-400">Pro Tip:</span> For a more accurate analysis, provide a genre, a music description, and label all song sections (e.g., [Verse], [Chorus], [Guitar Solo]).
+      </div>
+
+      <form onSubmit={handleSubmit} className="space-y-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+           <InputField
+            id="title"
+            label="Song Title"
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            placeholder={exampleAnalysis.title}
+            maxLength={CHAR_LIMITS.title}
+            required
+            disabled={isLoading}
+          />
+          <InputField
+            id="genre"
+            label="Genre (Optional)"
+            value={genre}
+            onChange={(e) => setGenre(e.target.value)}
+            placeholder="e.g., Indie Folk, Country, Pop"
+            maxLength={CHAR_LIMITS.genre}
+            disabled={isLoading}
+          />
+        </div>
+        
+        <InputField
+            id="musicDescription"
+            label="Music Description (Optional)"
+            value={musicDescription}
+            onChange={(e) => setMusicDescription(e.target.value)}
+            placeholder="e.g., Slow, melancholic acoustic ballad with a sparse piano melody."
+            maxLength={CHAR_LIMITS.musicDescription}
+            disabled={isLoading}
+            isTextArea
+            rows={2}
+          />
+
+        <InputField
+            id="lyrics"
+            label="Lyrics"
+            value={lyrics}
+            onChange={(e) => setLyrics(e.target.value)}
+            placeholder={exampleLyricsPlaceholder}
+            maxLength={CHAR_LIMITS.lyrics}
+            required
+            disabled={isLoading}
+            isTextArea
+            rows={10}
+        />
+
+        {formError && <p className="text-sm text-red-400 text-center">{formError}</p>}
+
+        <div className="flex flex-col sm:flex-row gap-4 pt-2">
+          <button
+            type="submit"
+            disabled={isLoading}
+            className="w-full flex-1 bg-gradient-to-r from-fuchsia-600 to-cyan-500 text-white font-bold py-3 px-6 rounded-lg hover:from-fuchsia-700 hover:to-cyan-600 focus:outline-none focus:ring-4 focus:ring-fuchsia-500/50 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center"
+          >
+            {isLoading ? (
+              <>
+                <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                Analyzing...
+              </>
+            ) : 'Analyze Song'}
+          </button>
+           <button
+            type="button"
+            onClick={onShowExample}
+            disabled={isLoading}
+            className="w-full sm:w-auto bg-slate-700 text-slate-300 hover:bg-slate-600 font-medium py-3 px-6 rounded-lg transition-colors duration-200 disabled:opacity-50"
+          >
+            View Example Analysis
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+};
+
+export default SongInputForm;
+--- START OF FILE components/AnalysisDisplay.tsx ---
+import React from 'react';
+import type { AnalysisResult } from '../types';
+import ScoreCard from './ScoreCard';
+import GenreAndArtistDetails from './GenreAndArtistDetails';
+import AnalysisHeader from './AnalysisHeader';
+
+interface AnalysisDisplayProps {
+  analysisResult: AnalysisResult;
+  onNewAnalysis: () => void;
+}
+
+const scoreCategories = [
+  { key: 'creativity', title: 'Creativity', color: 'text-cyan-400' },
+  { key: 'emotionalImpact', title: 'Emotional Impact', color: 'text-rose-400' },
+  { key: 'lyricism', title: 'Lyricism', color: 'text-amber-400' },
+  { key: 'craftsmanship', title: 'Craftsmanship', color: 'text-indigo-400' },
+  { key: 'audienceAppeal', title: 'Audience Appeal', color: 'text-teal-400' },
+  { key: 'commercialPotential', title: 'Commercial Potential', color: 'text-lime-400' },
+] as const;
+
+const BulletListSection: React.FC<{ title: string; items: string[] }> = ({ title, items }) => (
+  <div>
+    <h3 className="text-xl font-bold text-white tracking-tight mb-4">{title}</h3>
+    <ul className="space-y-2 list-disc list-inside bg-slate-900/50 p-4 rounded-lg border border-slate-700">
+      {items.map((item, index) => (
+        <li key={index} className="text-slate-300">{item}</li>
+      ))}
+    </ul>
+  </div>
+);
+
+
+const AnalysisDisplay: React.FC<AnalysisDisplayProps> = ({ analysisResult, onNewAnalysis }) => {
+  return (
+    <div id="analysis-report" className="space-y-8 animate-fade-in">
+      <AnalysisHeader analysisResult={analysisResult} onNewAnalysis={onNewAnalysis} />
+
+      <div className="bg-slate-800 p-6 rounded-2xl border border-slate-700 shadow-lg">
+        <h3 className="text-xl font-bold text-white tracking-tight mb-3">First Impression</h3>
+        <p className="text-slate-300 italic">"{analysisResult.firstImpression}"</p>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {scoreCategories.map(({ key, title, color }) => (
+          <ScoreCard
+            key={key}
+            title={title}
+            score={analysisResult[key].score}
+            feedback={analysisResult[key].feedback}
+            colorClass={color}
+          />
+        ))}
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <BulletListSection title="Strengths" items={analysisResult.strengths} />
+        <BulletListSection title="Weaknesses" items={analysisResult.weaknesses} />
+        <BulletListSection title="Suggestions" items={analysisResult.suggestions} />
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <GenreAndArtistDetails title="Artist Comparisons" items={analysisResult.artistComparisons} />
+          <GenreAndArtistDetails title="Suggested Genres" items={analysisResult.suggestedGenres} />
+      </div>
+
+      <div className="bg-slate-800 p-6 rounded-2xl border border-slate-700 shadow-lg">
+        <h3 className="text-xl font-bold text-white tracking-tight mb-3">Final Verdict</h3>
+        <p className="text-slate-300 leading-relaxed">{analysisResult.finalVerdict}</p>
+      </div>
+      
+      <div className="text-center pt-4 hide-on-pdf">
+         <button 
+            onClick={onNewAnalysis} 
+            className="bg-slate-700 text-slate-200 hover:bg-slate-600 px-6 py-3 text-sm font-medium rounded-lg transition-colors flex items-center gap-2 shadow-lg mx-auto"
+        >
+            Start New Analysis
+        </button>
+      </div>
+    </div>
+  );
+};
+
+export default AnalysisDisplay;
+--- START OF FILE components/ScoreCard.tsx ---
+import React from 'react';
+
+interface ScoreCardProps {
+  title: string;
+  score: number;
+  feedback: string;
+  colorClass: string;
+}
+
+const ScoreCard: React.FC<ScoreCardProps> = ({ title, score, feedback, colorClass }) => {
+  const getScoreColor = (score: number) => {
+    if (score >= 8.0) return 'text-green-400';
+    if (score >= 6.0) return 'text-yellow-400';
+    if (score >= 4.0) return 'text-orange-400';
+    return 'text-red-400';
+  };
+
+  const circumference = 2 * Math.PI * 45; // r=45
+  const offset = circumference - (score / 10) * circumference;
+
+  return (
+    <div className="bg-slate-800 p-6 rounded-2xl border border-slate-700 flex flex-col md:flex-row items-start gap-6 shadow-lg transform transition-all duration-300 hover:scale-105 hover:border-slate-600">
+      <div className="flex-shrink-0 flex flex-col items-center w-full md:w-32">
+        <div className="relative w-32 h-32">
+          <svg className="w-full h-full" viewBox="0 0 100 100">
+            <circle
+              className="text-slate-700"
+              strokeWidth="10"
+              stroke="currentColor"
+              fill="transparent"
+              r="45"
+              cx="50"
+              cy="50"
+            />
+            <circle
+              className={colorClass}
+              strokeWidth="10"
+              strokeDasharray={circumference}
+              strokeDashoffset={offset}
+              strokeLinecap="round"
+              stroke="currentColor"
+              fill="transparent"
+              r="45"
+              cx="50"
+              cy="50"
+              transform="rotate(-90 50 50)"
+              style={{ transition: 'stroke-dashoffset 0.5s ease-in-out' }}
+            />
+          </svg>
+          <div className="absolute inset-0 flex items-center justify-center">
+            <span className={`text-3xl font-bold ${getScoreColor(score)}`}>{score.toFixed(1)}</span>
+          </div>
+        </div>
+        <h3 className="text-lg font-bold text-white mt-4 text-center">{title}</h3>
+      </div>
+      <div className="flex-grow">
+        <p className="text-slate-300 leading-relaxed">{feedback}</p>
+      </div>
+    </div>
+  );
+};
+
+export default ScoreCard;
+--- START OF FILE components/LoadingSpinner.tsx ---
+import React from 'react';
+
+const LoadingSpinner: React.FC = () => {
+  return (
+    <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-800/80 rounded-2xl backdrop-blur-sm z-10">
+      <div className="w-16 h-16 border-4 border-t-transparent border-fuchsia-500 rounded-full animate-spin"></div>
+      <p className="mt-4 text-lg text-slate-200">AI is analyzing your song...</p>
+    </div>
+  );
+};
+
+export default LoadingSpinner;
+--- START OF FILE components/ErrorAlert.tsx ---
+import React from 'react';
+
+interface ErrorAlertProps {
+  message: string;
+}
+
+const ErrorAlert: React.FC<ErrorAlertProps> = ({ message }) => {
+  return (
+    <div className="absolute inset-0 flex items-center justify-center p-4">
+        <div className="bg-red-900/50 border border-red-700 text-red-200 px-6 py-4 rounded-lg shadow-lg flex items-center max-w-md text-center">
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 mr-3 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <div>
+                <h3 className="font-bold">An Error Occurred</h3>
+                <p className="text-sm">{message}</p>
+            </div>
+        </div>
+    </div>
+  );
+};
+
+export default ErrorAlert;
+--- START OF FILE components/DownloadControls.tsx ---
+import React, { useState } from 'react';
+import type { AnalysisResult } from '../types';
+import jsPDF from 'jspdf';
+import html2canvas from 'html2canvas';
+import saveAs from 'file-saver';
+import { Document, Packer, Paragraph, TextRun, HeadingLevel } from 'docx';
+
+interface DownloadControlsProps {
+    analysisResult: AnalysisResult;
+}
+
+const formatForDocx = (result: AnalysisResult): Document => {
+  const scoreCategories = [
+    { title: 'Creativity', ...result.creativity },
+    { title: 'Emotional Impact', ...result.emotionalImpact },
+    { title: 'Lyricism', ...result.lyricism },
+    { title: 'Craftsmanship', ...result.craftsmanship },
+    { title: 'Audience Appeal', ...result.audienceAppeal },
+    { title: 'Commercial Potential', ...result.commercialPotential },
+  ];
+
+  const children: Paragraph[] = [
+    new Paragraph({ text: "Song Analysis Report", heading: HeadingLevel.HEADING_1, alignment: 'center' }),
+    new Paragraph({ text: `Title: ${result.title}`, heading: HeadingLevel.HEADING_2 }),
+    new Paragraph({ text: `Overall Score: ${result.overallScore.toFixed(1)}/10.0`, heading: HeadingLevel.HEADING_3 }),
+    new Paragraph({ text: "" }),
+    new Paragraph({ text: "First Impression", heading: HeadingLevel.HEADING_4 }),
+    new Paragraph({ children: [new TextRun({ text: result.firstImpression, italics: true })] }),
+    new Paragraph({ text: "" }),
+
+    new Paragraph({ text: "Score Breakdown", heading: HeadingLevel.HEADING_2 }),
+    ...scoreCategories.flatMap(cat => [
+      new Paragraph({ text: `${cat.title}: ${cat.score.toFixed(1)}/10.0`, heading: HeadingLevel.HEADING_3 }),
+      new Paragraph({ text: cat.feedback }),
+      new Paragraph({ text: "" }),
+    ]),
+
+    new Paragraph({ text: "Strengths", heading: HeadingLevel.HEADING_2 }),
+    ...result.strengths.map(strength => new Paragraph({ text: strength, bullet: { level: 0 } })),
+    new Paragraph({ text: "" }),
+
+    new Paragraph({ text: "Weaknesses", heading: HeadingLevel.HEADING_2 }),
+    ...result.weaknesses.map(weakness => new Paragraph({ text: weakness, bullet: { level: 0 } })),
+    new Paragraph({ text: "" }),
+    
+    new Paragraph({ text: "Suggestions", heading: HeadingLevel.HEADING_2 }),
+    ...result.suggestions.map(suggestion => new Paragraph({ text: suggestion, bullet: { level: 0 } })),
+    new Paragraph({ text: "" }),
+
+    new Paragraph({ text: "Artist Comparisons", heading: HeadingLevel.HEADING_2 }),
+    ...result.artistComparisons.flatMap(comp => [
+      new Paragraph({ text: comp.artist, heading: HeadingLevel.HEADING_3 }),
+      new Paragraph({ text: comp.reason }),
+      new Paragraph({ text: "" }),
+    ]),
+
+    new Paragraph({ text: "Suggested Genres", heading: HeadingLevel.HEADING_2 }),
+    ...result.suggestedGenres.flatMap(genre => [
+      new Paragraph({ text: genre.name, heading: HeadingLevel.HEADING_3 }),
+      new Paragraph({ text: genre.reason }),
+      new Paragraph({ text: "" }),
+    ]),
+    
+    new Paragraph({ text: "Final Verdict", heading: HeadingLevel.HEADING_2 }),
+    new Paragraph({ text: result.finalVerdict }),
+  ];
+  
+  return new Document({
+    sections: [{ children }],
+  });
+};
+
+const DownloadControls: React.FC<DownloadControlsProps> = ({ analysisResult }) => {
+    const [isOpen, setIsOpen] = useState(false);
+    const [isDownloading, setIsDownloading] = useState(false);
+
+    const safeTitle = analysisResult.title.replace(/[^a-z0-9]/gi, '_').toLowerCase();
+    const fileName = `Song_Analysis_${safeTitle}`;
+
+    const handleDownloadPdf = async () => {
+        setIsDownloading(true);
+        const reportElement = document.getElementById('analysis-report');
+        if (reportElement) {
+            const buttons = reportElement.querySelectorAll('.hide-on-pdf');
+            buttons.forEach(btn => btn.classList.add('invisible'));
+
+            const canvas = await html2canvas(reportElement, { scale: 2, backgroundColor: '#1e293b' });
+            
+            buttons.forEach(btn => btn.classList.remove('invisible'));
+
+            const imgData = canvas.toDataURL('image/png');
+            const pdf = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4' });
+            const pdfWidth = pdf.internal.pageSize.getWidth();
+            const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
+            pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
+            pdf.save(`${fileName}.pdf`);
+        }
+        setIsDownloading(false);
+        setIsOpen(false);
+    };
+
+    const handleDownloadDocx = async () => {
+        setIsDownloading(true);
+        const doc = formatForDocx(analysisResult);
+        const blob = await Packer.toBlob(doc);
+        saveAs(blob, `${fileName}.docx`);
+        setIsDownloading(false);
+        setIsOpen(false);
+    };
+    
+    const handleDownloadJson = () => {
+        const jsonContent = JSON.stringify(analysisResult, null, 2);
+        const blob = new Blob([jsonContent], { type: 'application/json;charset=utf-8' });
+        saveAs(blob, `${fileName}.json`);
+        setIsOpen(false);
+    };
+    
+    const handleDownloadTxt = () => {
+      let textContent = `Song Analysis Report\n`;
+      textContent += `Title: ${analysisResult.title}\n`;
+      textContent += `Overall Score: ${analysisResult.overallScore.toFixed(1)}/10.0\n\n`;
+      
+      textContent += `First Impression:\n"${analysisResult.firstImpression}"\n\n`;
+
+      textContent += `--- SCORE BREAKDOWN ---\n`;
+      const scoreCategories = [
+          { title: 'Creativity', data: analysisResult.creativity },
+          { title: 'Emotional Impact', data: analysisResult.emotionalImpact },
+          { title: 'Lyricism', data: analysisResult.lyricism },
+          { title: 'Craftsmanship', data: analysisResult.craftsmanship },
+          { title: 'Audience Appeal', data: analysisResult.audienceAppeal },
+          { title: 'Commercial Potential', data: analysisResult.commercialPotential },
+      ];
+      scoreCategories.forEach(cat => {
+          textContent += `${cat.title}: ${cat.data.score.toFixed(1)}/10.0\n`;
+          textContent += `${cat.data.feedback}\n\n`;
+      });
+      
+      textContent += `--- STRENGTHS ---\n`;
+      analysisResult.strengths.forEach(item => textContent += `- ${item}\n`);
+      textContent += `\n`;
+
+      textContent += `--- WEAKNESSES ---\n`;
+      analysisResult.weaknesses.forEach(item => textContent += `- ${item}\n`);
+      textContent += `\n`;
+
+      textContent += `--- SUGGESTIONS ---\n`;
+      analysisResult.suggestions.forEach(item => textContent += `- ${item}\n`);
+      textContent += `\n`;
+
+      textContent += `--- ARTIST COMPARISONS ---\n`;
+      analysisResult.artistComparisons.forEach(item => {
+        textContent += `${item.artist}:\n`;
+        textContent += `${item.reason}\n\n`;
+      });
+
+      textContent += `--- SUGGESTED GENRES ---\n`;
+      analysisResult.suggestedGenres.forEach(item => {
+        textContent += `${item.name}:\n`;
+        textContent += `${item.reason}\n\n`;
+      });
+      
+      textContent += `--- FINAL VERDICT ---\n`;
+      textContent += `${analysisResult.finalVerdict}\n`;
+
+      const blob = new Blob([textContent], { type: 'text/plain;charset=utf-8' });
+      saveAs(blob, `${fileName}.txt`);
+      setIsOpen(false);
+    };
+
+    const downloadOptions = [
+        { label: "PDF (.pdf)", handler: handleDownloadPdf },
+        { label: "DOCX (.docx)", handler: handleDownloadDocx },
+        { label: "Text (.txt)", handler: handleDownloadTxt },
+        { label: "JSON (.json)", handler: handleDownloadJson }
+    ];
+
+    return (
+        <div className="relative hide-on-pdf">
+            <button
+                onClick={() => setIsOpen(!isOpen)}
+                className="bg-slate-700 text-slate-200 hover:bg-slate-600 px-4 py-2 text-sm font-medium rounded-lg transition-colors flex items-center gap-2 shadow-lg"
+            >
+                Export
+                <svg xmlns="http://www.w3.org/2000/svg" className={`h-4 w-4 transition-transform ${isOpen ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                </svg>
+            </button>
+            {isOpen && (
+                <div 
+                    className="absolute right-0 mt-2 w-48 bg-slate-800 border border-slate-600 rounded-lg shadow-xl z-20 py-1"
+                >
+                    {downloadOptions.map(option => (
+                         <button
+                            key={option.label}
+                            onClick={option.handler}
+                            disabled={isDownloading}
+                            className="w-full text-left px-4 py-2 text-sm text-slate-300 hover:bg-slate-700 flex items-center gap-3 disabled:opacity-50"
+                        >
+                            {option.label}
+                        </button>
+                    ))}
+                </div>
+            )}
+        </div>
+    );
+};
+
+export default DownloadControls;
+--- START OF FILE components/Header.tsx ---
+import React, { useState, useEffect } from 'react';
+import { useAuth } from '../hooks/useAuth';
+import { getFirebaseAuth, isFirebaseEnabled } from '../firebase';
+import { signOut } from 'firebase/auth';
+import AuthModal from './AuthModal';
+
+interface HeaderProps {
+  onHistoryToggle: () => void;
+  isHistoryVisible: boolean;
+}
+
+const Header: React.FC<HeaderProps> = ({ onHistoryToggle, isHistoryVisible }) => {
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+  const { currentUser } = useAuth();
+  const [showGlow, setShowGlow] = useState(false);
+
+  useEffect(() => {
+    const hasSeenGlow = sessionStorage.getItem('hasSeenHistoryGlow');
+    if (!hasSeenGlow && !isHistoryVisible) {
+      setShowGlow(true);
+      sessionStorage.setItem('hasSeenHistoryGlow', 'true');
+      const timer = setTimeout(() => setShowGlow(false), 5000); // Glow for 5 seconds
+      return () => clearTimeout(timer);
+    }
+  }, [isHistoryVisible]);
+
+  const handleLogout = async () => {
+    const auth = getFirebaseAuth();
+    if (auth) {
+      try {
+        await signOut(auth);
+      } catch (error) {
+        console.error("Error signing out: ", error);
+      }
+    }
+  };
+
+  const glowClass = showGlow ? 'animate-glow' : '';
+
+  return (
+    <>
+      <header className="bg-slate-800/80 backdrop-blur-sm border-b border-slate-700 p-4 flex justify-between items-center sticky top-0 z-40">
+        <div className="flex items-center gap-4">
+          <button
+            onClick={onHistoryToggle}
+            className={`relative p-2 rounded-full text-slate-400 hover:bg-slate-700 hover:text-white transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-slate-800 focus:ring-white ${glowClass}`}
+            aria-label="Toggle history sidebar"
+          >
+             <style>{`
+                @keyframes glow {
+                    0%, 100% { box-shadow: 0 0 0px #06b6d4; }
+                    50% { box-shadow: 0 0 15px #06b6d4; }
+                }
+                .animate-glow {
+                    animation: glow 2.5s ease-in-out 2;
+                }
+            `}</style>
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+            </svg>
+          </button>
+          <h1 className="text-xl font-bold text-white">Song Analyzer AI</h1>
+        </div>
+        <div>
+          {currentUser ? (
+            <div className="flex items-center gap-4">
+              <span className="text-sm text-slate-300 hidden sm:block">{currentUser.email}</span>
+              <button
+                onClick={handleLogout}
+                className="bg-slate-700 text-slate-300 hover:bg-slate-600 font-medium py-2 px-4 rounded-lg transition-colors text-sm"
+              >
+                Sign Out
+              </button>
+            </div>
+          ) : (
+            isFirebaseEnabled ? (
+              <button
+                onClick={() => setIsAuthModalOpen(true)}
+                className="bg-gradient-to-r from-fuchsia-600 to-cyan-500 text-white font-bold py-2 px-4 rounded-lg hover:from-fuchsia-700 hover:to-cyan-600 focus:outline-none focus:ring-4 focus:ring-fuchsia-500/50 transition-all duration-300 text-sm"
+              >
+                Login / Sign Up
+              </button>
+            ) : null
+          )}
+        </div>
+      </header>
+      <AuthModal isOpen={isAuthModalOpen} onClose={() => setIsAuthModalOpen(false)} />
+    </>
+  );
+};
+
+export default Header;
+--- START OF FILE components/AuthModal.tsx ---
+import React, { useState } from 'react';
+import { getFirebaseAuth, isFirebaseEnabled } from '../firebase';
+import { 
+    createUserWithEmailAndPassword, 
+    signInWithEmailAndPassword,
+    GoogleAuthProvider,
+    signInWithPopup
+} from 'firebase/auth';
+
+interface AuthModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+}
+
+const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
+    const [isLogin, setIsLogin] = useState(true);
+    const [email, setEmail] = useState('');
+    const [password, setPassword] = useState('');
+    const [error, setError] = useState<string | null>(null);
+
+    const handleSubmit = async (e: React.FormEvent) => {
+        e.preventDefault();
+        setError(null);
+        const auth = getFirebaseAuth();
+        if (!auth) {
+            setError("Authentication service is not available.");
+            return;
+        }
+
+        try {
+            if (isLogin) {
+                await signInWithEmailAndPassword(auth, email, password);
+            } else {
+                await createUserWithEmailAndPassword(auth, email, password);
+            }
+            onClose();
+        } catch (err: any) {
+            setError(err.message);
+        }
+    };
+
+    const handleGoogleSignIn = async () => {
+        const auth = getFirebaseAuth();
+        if (!auth) {
+            setError("Authentication service is not available.");
+            return;
+        }
+        const provider = new GoogleAuthProvider();
+        try {
+            await signInWithPopup(auth, provider);
+            onClose();
+        } catch (err: any) {
+            setError(err.message);
+        }
+    }
+
+    if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 animate-fade-in" onClick={onClose}>
+      <div className="bg-slate-800 border border-slate-700 rounded-2xl shadow-xl w-full max-w-md p-8 m-4" onClick={e => e.stopPropagation()}>
+        <div className="text-center">
+            <h2 className="text-2xl font-bold text-white mb-2">{isLogin ? 'Welcome Back' : 'Create Account'}</h2>
+            <p className="text-slate-400 mb-6">{isLogin ? 'Sign in to access your history.' : 'Sign up to save your analyses.'}</p>
+        </div>
+        
+        {error && <p className="bg-red-900/50 text-red-300 p-3 rounded-md text-sm mb-4 text-center">{error}</p>}
+        
+        {!isFirebaseEnabled ? (
+            <div className="bg-yellow-900/50 border border-yellow-700 text-yellow-200 px-4 py-3 rounded-lg text-center text-sm">
+                <p className="font-bold">Feature Unavailable</p>
+                <p>Login and history features are not configured for this instance of the application.</p>
+            </div>
+        ) : (
+          <>
+            <form onSubmit={handleSubmit}>
+                <div className="mb-4">
+                    <label htmlFor="email-auth" className="block text-sm font-medium text-slate-300 mb-2">Email</label>
+                    <input
+                        id="email-auth"
+                        type="email"
+                        value={email}
+                        onChange={(e) => setEmail(e.target.value)}
+                        required
+                        className="w-full px-4 py-3 bg-slate-900 border border-slate-600 rounded-lg text-slate-200 placeholder-slate-500 focus:ring-2 focus:ring-fuchsia-500 focus:border-fuchsia-500 transition duration-200"
+                    />
+                </div>
+                 <div className="mb-6">
+                    <label htmlFor="password-auth" className="block text-sm font-medium text-slate-300 mb-2">Password</label>
+                    <input
+                        id="password-auth"
+                        type="password"
+                        value={password}
+                        onChange={(e) => setPassword(e.target.value)}
+                        required
+                        className="w-full px-4 py-3 bg-slate-900 border border-slate-600 rounded-lg text-slate-200 placeholder-slate-500 focus:ring-2 focus:ring-fuchsia-500 focus:border-fuchsia-500 transition duration-200"
+                    />
+                </div>
+                <button type="submit" className="w-full bg-gradient-to-r from-fuchsia-600 to-cyan-500 text-white font-bold py-3 px-4 rounded-lg hover:from-fuchsia-700 hover:to-cyan-600 focus:outline-none focus:ring-4 focus:ring-fuchsia-500/50 transition-all duration-300">
+                    {isLogin ? 'Sign In' : 'Sign Up'}
+                </button>
+            </form>
+
+            <div className="relative my-6">
+              <div className="absolute inset-0 flex items-center" aria-hidden="true">
+                <div className="w-full border-t border-slate-600" />
+              </div>
+              <div className="relative flex justify-center text-sm">
+                <span className="bg-slate-800 px-2 text-slate-400">Or continue with</span>
+              </div>
+            </div>
+
+            <button onClick={handleGoogleSignIn} className="w-full flex items-center justify-center gap-3 bg-slate-700 text-slate-200 font-semibold py-3 px-4 rounded-lg hover:bg-slate-600 focus:outline-none focus:ring-4 focus:ring-slate-500/50 transition-all duration-300">
+                 <svg className="w-5 h-5" aria-hidden="true" focusable="false" data-prefix="fab" data-icon="google" role="img" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 488 512">
+                    <path fill="currentColor" d="M488 261.8C488 403.3 381.5 504 248 504 110.8 504 0 393.2 0 256S110.8 8 248 8c66.8 0 126 23.4 172.9 61.9l-76.8 64.4C308.2 99.1 280.7 86 248 86c-84.3 0-152.3 67.4-152.3 150s68 150 152.3 150c95.7 0 133.7-75.2 138.1-112.2H248v-85.3h236.1c2.3 12.7 3.9 26.9 3.9 41.4z"></path>
+                </svg>
+                Sign in with Google
+            </button>
+
+
+            <div className="text-center mt-6">
+                <button onClick={() => setIsLogin(!isLogin)} className="text-sm text-cyan-400 hover:text-cyan-300">
+                    {isLogin ? "Don't have an account? Sign Up" : 'Already have an account? Sign In'}
+                </button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+};
+
+export default AuthModal;
+--- START OF FILE components/HistorySidebar.tsx ---
+import React, { useState, useEffect } from 'react';
+import { useAuth } from '../hooks/useAuth';
+import { getUserAnalyses } from '../services/firestoreService';
+import type { AnalysisResult } from '../types';
+import { isFirebaseEnabled } from '../firebase';
+
+interface HistorySidebarProps {
+  isVisible: boolean;
+  onSelectItem: (item: AnalysisResult) => void;
+  onCompareItems: (item1: AnalysisResult, item2: AnalysisResult) => void;
+  onClose: () => void;
+}
+
+const HistorySidebar: React.FC<HistorySidebarProps> = ({ isVisible, onSelectItem, onCompareItems, onClose }) => {
+    const { currentUser } = useAuth();
+    const [history, setHistory] = useState<AnalysisResult[]>([]);
+    const [isLoading, setIsLoading] = useState(true);
+    const [error, setError] = useState<string | null>(null);
+    const [selectedItems, setSelectedItems] = useState<string[]>([]);
+
+    useEffect(() => {
+        if (currentUser && isVisible) {
+            setIsLoading(true);
+            setError(null);
+            setSelectedItems([]);
+            getUserAnalyses(currentUser.uid)
+                .then(analyses => setHistory(analyses))
+                .catch(err => setError("Could not load history."))
+                .finally(() => setIsLoading(false));
+        } else if (!currentUser) {
+            setIsLoading(false);
+            setHistory([]);
+        }
+    }, [currentUser, isVisible]);
+
+    const handleItemToggle = (id: string) => {
+        setSelectedItems(prev => {
+            const newSelection = prev.includes(id)
+                ? prev.filter(itemId => itemId !== id)
+                : [...prev, id];
+
+            if (newSelection.length > 2) {
+                return [newSelection[1], newSelection[2]]; // Keep the last two selected
+            }
+            return newSelection;
+        });
+    };
+
+    const handleCompareClick = () => {
+        if (selectedItems.length === 2) {
+            const item1 = history.find(h => h.id === selectedItems[0]);
+            const item2 = history.find(h => h.id === selectedItems[1]);
+            if (item1 && item2) {
+                onCompareItems(item1, item2);
+            }
+        }
+    };
+    
+    const formatDate = (timestamp: any) => {
+        if (!timestamp || !timestamp.toDate) return 'Just now';
+        return timestamp.toDate().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    };
+
+    const sidebarClasses = `
+        fixed top-0 left-0 h-full w-80 bg-slate-800 border-r border-slate-700 p-4 flex flex-col z-30
+        transition-transform duration-300 ease-in-out
+        ${isVisible ? 'translate-x-0' : '-translate-x-full'}
+    `;
+
+    const renderContent = () => {
+        if (!isFirebaseEnabled) {
+            return (
+                 <div className="text-center text-slate-500 text-sm mt-8 p-4 bg-slate-900/50 rounded-lg">
+                    <p className="font-semibold text-slate-400">Feature Disabled</p>
+                    <p>Login and history features are not configured for this instance.</p>
+                </div>
+            );
+        }
+        if (!currentUser) {
+            return (
+                <div className="text-center text-slate-500 text-sm mt-8 p-4 bg-slate-900/50 rounded-lg">
+                    <p className="font-semibold text-slate-400">Please Log In</p>
+                    <p>Log in to save and view your analysis history.</p>
+                </div>
+            );
+        }
+        if (isLoading) return <p className="text-slate-400 text-sm animate-pulse text-center mt-8">Loading history...</p>;
+        if (error) return <p className="text-red-400 text-sm text-center mt-8">{error}</p>;
+        if (history.length === 0) {
+             return (
+                <div className="text-center text-slate-500 text-sm mt-8">
+                    <p>Your saved analyses will appear here.</p>
+                </div>
+            );
+        }
+        return (
+            <div className="overflow-y-auto space-y-2 flex-1 -mr-2 pr-2">
+                {history.map(item => (
+                    <div 
+                        key={item.id} 
+                        className={`flex items-center gap-3 p-2 rounded-lg transition-colors cursor-pointer ${selectedItems.includes(item.id!) ? 'bg-slate-700' : 'hover:bg-slate-700/50'}`}
+                        onClick={() => handleItemToggle(item.id!)}
+                    >
+                         <div className={`w-5 h-5 rounded border-2 flex-shrink-0 flex items-center justify-center ${selectedItems.includes(item.id!) ? 'bg-cyan-500 border-cyan-500' : 'border-slate-500'}`}>
+                           {selectedItems.includes(item.id!) && <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7"/></svg>}
+                        </div>
+                        <div className="flex-1" onDoubleClick={() => onSelectItem(item)}>
+                            <p className="font-semibold text-slate-200 truncate" title={item.title}>{item.title}</p>
+                            <p className="text-xs text-slate-400">{formatDate(item.createdAt)}</p>
+                        </div>
+                    </div>
+                ))}
+            </div>
+        );
+    }
+
+    return (
+        <aside className={sidebarClasses}>
+            <div className="flex justify-between items-center mb-4 flex-shrink-0">
+                <h2 className="text-lg font-bold text-white">Analysis History</h2>
+                <button onClick={onClose} className="text-slate-400 hover:text-white">
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                </button>
+            </div>
+            {renderContent()}
+             {currentUser && history.length > 0 && (
+                <div className="pt-4 border-t border-slate-700 flex-shrink-0 space-y-2">
+                     <button 
+                        onClick={handleCompareClick}
+                        disabled={selectedItems.length !== 2}
+                        className="w-full bg-cyan-600 text-white font-bold py-2 px-4 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed hover:bg-cyan-700 transition-colors"
+                    >
+                        Compare ({selectedItems.length}/2)
+                    </button>
+                    <button
+                        onClick={() => setSelectedItems([])}
+                        disabled={selectedItems.length === 0}
+                        className="w-full bg-slate-700 text-slate-300 hover:bg-slate-600 font-medium py-2 px-4 rounded-lg transition-colors text-sm disabled:opacity-50"
+                    >
+                        Clear Selection
+                    </button>
+                </div>
+            )}
+        </aside>
+    );
+};
+
+export default HistorySidebar;
+--- START OF FILE components/ComparisonDisplay.tsx ---
+import React from 'react';
+import type { AnalysisResult } from '../types';
+
+interface ComparisonDisplayProps {
+    item1: AnalysisResult;
+    item2: AnalysisResult;
+    onNewAnalysis: () => void;
+}
+
+const ScoreRow: React.FC<{ label: string; score1: number; score2: number }> = ({ label, score1, score2 }) => {
+    const diff = score1 - score2;
+    let diffColor = 'text-slate-400';
+    let diffSign = '';
+    if (diff > 0) {
+        diffColor = 'text-green-400';
+        diffSign = '+';
+    } else if (diff < 0) {
+        diffColor = 'text-red-400';
+    }
+
+    return (
+        <div className="flex justify-between items-baseline text-slate-300 py-2 border-b border-slate-700 last:border-b-0">
+            <span className="font-semibold">{label}</span>
+            <div className="flex items-baseline gap-4">
+                <span className="font-bold text-lg w-12 text-center">{score1.toFixed(1)}</span>
+                <span className={`font-bold text-sm w-12 text-center ${diffColor}`}>{diff !== 0 ? `${diffSign}${diff.toFixed(1)}` : '-'}</span>
+                <span className="font-bold text-lg w-12 text-center">{score2.toFixed(1)}</span>
+            </div>
+        </div>
+    );
+};
+
+const ComparisonDisplay: React.FC<ComparisonDisplayProps> = ({ item1, item2, onNewAnalysis }) => {
+    return (
+         <div className="space-y-8 animate-fade-in">
+            <header className="text-center p-6 bg-slate-800 rounded-2xl border border-slate-700 shadow-xl relative hide-on-pdf">
+                <div className="absolute top-4 left-4">
+                     <button 
+                        onClick={onNewAnalysis} 
+                        className="bg-slate-700 text-slate-200 hover:bg-slate-600 px-4 py-2 text-sm font-medium rounded-lg transition-colors flex items-center gap-2 shadow-lg"
+                    >
+                        New Analysis
+                    </button>
+                </div>
+                <h1 className="text-4xl font-extrabold text-white tracking-tight">Comparison View</h1>
+            </header>
+
+            <div className="bg-slate-800 p-6 rounded-2xl border border-slate-700 shadow-lg">
+                <div className="flex justify-between items-center mb-6">
+                    <h2 className="text-xl font-bold text-white truncate w-1/3 text-left" title={item1.title}>{item1.title}</h2>
+                    <h3 className="text-lg font-semibold text-slate-400 w-1/3 text-center">Score Comparison</h3>
+                    <h2 className="text-xl font-bold text-white truncate w-1/3 text-right" title={item2.title}>{item2.title}</h2>
+                </div>
+
+                <div className="space-y-2">
+                    <ScoreRow label="Overall Score" score1={item1.overallScore} score2={item2.overallScore} />
+                    <ScoreRow label="Creativity" score1={item1.creativity.score} score2={item2.creativity.score} />
+                    <ScoreRow label="Emotional Impact" score1={item1.emotionalImpact.score} score2={item2.emotionalImpact.score} />
+                    <ScoreRow label="Lyricism" score1={item1.lyricism.score} score2={item2.lyricism.score} />
+                    <ScoreRow label="Craftsmanship" score1={item1.craftsmanship.score} score2={item2.craftsmanship.score} />
+                    <ScoreRow label="Audience Appeal" score1={item1.audienceAppeal.score} score2={item2.audienceAppeal.score} />
+                    <ScoreRow label="Commercial Potential" score1={item1.commercialPotential.score} score2={item2.commercialPotential.score} />
+                </div>
+            </div>
+        </div>
+    );
+};
+
+export default ComparisonDisplay;
+--- START OF FILE components/Footer.tsx ---
+import React, { useState } from 'react';
+import FAQModal from './FAQModal';
+
+const Footer: React.FC = () => {
+    const [isFaqOpen, setIsFaqOpen] = useState(false);
+
+    return (
+        <>
+            <footer className="bg-slate-800/80 backdrop-blur-sm border-t border-slate-700 text-center p-4 text-xs text-slate-500 flex-shrink-0">
+                <p>
+                    Powered by Google Gemini. Not professional advice. Please review analyses critically.
+                </p>
+                <div className="flex justify-center gap-4 mt-2">
+                    <button onClick={() => setIsFaqOpen(true)} className="hover:text-cyan-400 transition-colors">
+                        About / FAQ
+                    </button>
+                    <span>&bull;</span>
+                     <button onClick={() => setIsFaqOpen(true)} className="hover:text-cyan-400 transition-colors">
+                        Disclaimer
+                    </button>
+                </div>
+            </footer>
+            <FAQModal isOpen={isFaqOpen} onClose={() => setIsFaqOpen(false)} />
+        </>
+    );
+}
+
+export default Footer;
+--- START OF FILE components/FAQModal.tsx ---
+import React from 'react';
+
+interface FAQModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+}
+
+const FAQItem: React.FC<{ question: string, children: React.ReactNode }> = ({ question, children }) => (
+    <div className="mb-6">
+        <h4 className="font-bold text-slate-200 mb-2">{question}</h4>
+        <div className="text-slate-400 text-sm space-y-2">{children}</div>
+    </div>
+);
+
+const CriteriaItem: React.FC<{ title: string, children: React.ReactNode }> = ({ title, children }) => (
+    <li className="ml-4">
+        <span className="font-semibold text-slate-300">{title}:</span> {children}
+    </li>
+);
+
+const FAQModal: React.FC<FAQModalProps> = ({ isOpen, onClose }) => {
+    if (!isOpen) return null;
+
+    return (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 animate-fade-in" onClick={onClose}>
+            <div 
+                className="bg-slate-800 border border-slate-700 rounded-2xl shadow-xl w-full max-w-2xl max-h-[80vh] flex flex-col"
+                onClick={e => e.stopPropagation()}
+            >
+                <div className="p-6 border-b border-slate-700 flex justify-between items-center flex-shrink-0">
+                    <h2 className="text-xl font-bold text-white">FAQ & About</h2>
+                    <button onClick={onClose} className="text-slate-400 hover:text-white">
+                        <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                    </button>
+                </div>
+                <div className="p-6 overflow-y-auto">
+                    <FAQItem question="How does this work?">
+                        <p>This tool uses Google's Gemini large language model to analyze your song. You provide the title, lyrics, and an optional description of the music, and the AI generates a detailed critique based on a predefined set of criteria.</p>
+                    </FAQItem>
+                    
+                    <FAQItem question="What are the analysis criteria?">
+                        <p>The AI is instructed to evaluate your song across several key areas:</p>
+                        <ul className="list-disc space-y-2 mt-2">
+                            <CriteriaItem title="Creativity & Originality">
+                                Does the song offer a fresh perspective and avoid common clichés? This rewards unique ideas and clever wordplay.
+                            </CriteriaItem>
+                            <CriteriaItem title="Emotional Impact">
+                                How well does the song connect with the listener emotionally? This measures its power to make the listener *feel* something.
+                            </CriteriaItem>
+                            <CriteriaItem title="Lyricism & Language">
+                                This evaluates the quality of the writing itself—rhyme scheme, meter, imagery, and storytelling.
+                            </CriteriaItem>
+                            <CriteriaItem title="Craftsmanship">
+                                This assesses the song's structure and technical construction. Does it have a clear verse-chorus structure and smooth transitions?
+                            </CriteriaItem>
+                             <CriteriaItem title="Audience Appeal">
+                                How likely is this song to find its target audience? This measures its potential to resonate with a specific demographic or niche.
+                            </CriteriaItem>
+                            <CriteriaItem title="Commercial Potential">
+                                Does the song have viability for mainstream success? This evaluates its potential for radio play, streaming playlists, and synchronization in media.
+                            </CriteriaItem>
+                        </ul>
+                    </FAQItem>
+
+                    <FAQItem question="Why do the scores change if I run the same song again?">
+                        <p>This "variability" is an intentional feature that mimics human creativity! Think of it like getting feedback from a panel of three different music experts. They would all agree on the main points, but each might focus on slightly different details and give slightly different scores (an 8.2 vs an 8.5).</p>
+                        <p>The AI behaves similarly to provide a more nuanced and "human-like" critique. Instead of focusing on the exact number, look at the overall trends. If a category consistently scores lower, that's a strong indicator of where you can improve.</p>
+                    </FAQItem>
+                    
+                    <FAQItem question="Do I have to sign up or log in to use this?">
+                        <p>No. The core song analysis functionality is available to everyone without an account. Signing up is completely optional but allows you to access the History feature, where you can save, revisit, and compare different versions of your songs.</p>
+                    </FAQItem>
+                    
+                    <FAQItem question="Is my data saved if I'm not logged in?">
+                         <p>No. Any analysis you run while logged out is processed and then immediately discarded. Nothing is saved. To save your work, you must be logged into an account, which associates your analyses securely with your user profile.</p>
+                    </FAQItem>
+
+                </div>
+            </div>
+        </div>
+    );
+};
+
+export default FAQModal;
+--- START OF FILE components/GenreAndArtistDetails.tsx ---
+import React from 'react';
+import type { ArtistComparison, SuggestedGenre } from '../types';
+
+interface GenreAndArtistDetailsProps {
+    title: string;
+    items: (ArtistComparison | SuggestedGenre)[];
+}
+
+const GenreAndArtistDetails: React.FC<GenreAndArtistDetailsProps> = ({ title, items }) => {
+    return (
+        <div>
+            <h3 className="text-xl font-bold text-white tracking-tight mb-4">{title}</h3>
+            <div className="space-y-4">
+                {items.map((item, index) => (
+                    <div key={index} className="bg-slate-900/50 p-4 rounded-lg border border-slate-700">
+                        <p className="font-semibold text-slate-200">{'artist' in item ? item.artist : item.name}</p>
+                        <p className="text-sm text-slate-400 italic mt-1">{item.reason}</p>
+                    </div>
+                ))}
+            </div>
+        </div>
+    );
+};
+
+export default GenreAndArtistDetails;
+--- START OF FILE components/AnalysisHeader.tsx ---
+import React from 'react';
+import DownloadControls from './DownloadControls';
+import type { AnalysisResult } from '../types';
+
+interface AnalysisHeaderProps {
+    analysisResult: AnalysisResult;
+    onNewAnalysis: () => void;
+}
+
+const getScoreGradient = (score: number) => {
+    if (score >= 8.0) return 'from-green-400 to-cyan-400';
+    if (score >= 6.0) return 'from-yellow-400 to-orange-400';
+    return 'from-orange-500 to-red-500';
+};
+
+const AnalysisHeader: React.FC<AnalysisHeaderProps> = ({ analysisResult, onNewAnalysis }) => {
+    const { title, overallScore } = analysisResult;
+    return (
+        <header className="text-center p-6 bg-slate-800 rounded-2xl border border-slate-700 shadow-xl relative mb-8">
+             <div className="absolute top-4 left-4 hide-on-pdf">
+                 <button 
+                    onClick={onNewAnalysis} 
+                    className="bg-slate-700 text-slate-200 hover:bg-slate-600 px-4 py-2 text-sm font-medium rounded-lg transition-colors flex items-center gap-2 shadow-lg"
+                >
+                    New Analysis
+                </button>
+            </div>
+            <div className="absolute top-4 right-4 hide-on-pdf">
+                <DownloadControls analysisResult={analysisResult} />
+            </div>
+
+            <p className="text-sm font-medium text-slate-400">Analysis Report for</p>
+            <h1 className="text-4xl font-extrabold text-white tracking-tight my-2">{title}</h1>
+
+            <div className="mt-4 inline-block">
+                <p className="text-xl font-semibold text-slate-300">Overall Score</p>
+                <p className={`text-7xl font-bold bg-clip-text text-transparent bg-gradient-to-r ${getScoreGradient(overallScore)} my-2`}>
+                    {overallScore.toFixed(1)}
+                </p>
+            </div>
+        </header>
+    );
+};
+
+export default AnalysisHeader;--- START OF FILE text/plain ---
+
