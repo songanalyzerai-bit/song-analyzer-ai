@@ -83,8 +83,9 @@ function App() {
     switch (currentView) {
       case 'analysis':
         return analysisResult ? (
-          <AnalysisDisplay 
-            analysisResult={analysisResult} 
+          <AnalysisDisplay
+            analysisResult={analysisResult}
+            onNewAnalysis={handleClearView}
           />
         ) : null;
       case 'comparison':
